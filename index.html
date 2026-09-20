@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sismos Colombia · Monitor de actividad sísmica</title>
+<meta name="description" content="Mapa interactivo e independiente de sismos, réplicas y movimiento telúrico en Colombia y su entorno, con datos abiertos del USGS.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+<style>
+  :root {
+    color-scheme: dark;
+    --plane:      #0d0d0d;
+    --surface-1:  #17181a;
+    --surface-2:  #1f2124;
+    --line:       #2c2e31;
+    --text:       #f4f4f2;
+    --text-2:     #b8b8b0;
+    --muted:      #8a8a84;
+    /* magnitude severity (status palette — fixed, ordered) */
+    --m-micro:    #0ca30c;
+    --m-minor:    #fab219;
+    --m-moderate: #ec835a;
+    --m-strong:   #d03b3b;
+    --m-major:    #8b1a1a;
+    /* sequential blue ramp (depth chart) */
+    --seq:        #3987e5;
+    --seq-soft:   #1c5cab;
+    --accent:     #3987e5;
+    --radius:     14px;
+    --shadow:     0 8px 30px rgba(0,0,0,.45);
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --plane:      #f4f4f1;
+    --surface-1:  #ffffff;
+    --surface-2:  #f7f7f4;
+    --line:       #e3e2dc;
+    --text:       #101013;
+    --text-2:     #45443f;
+    --muted:      #6f6e68;
+    --seq:        #256abf;
+    --seq-soft:   #9ec5f4;
+    --accent:     #256abf;
+    --shadow:     0 8px 30px rgba(20,20,30,.12);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--plane);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.45;
+  }
+  a { color: var(--accent); }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.02em; font-weight: 600; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 0 clamp(16px, 3vw, 32px); }
+
+  /* ---------- HEADER ---------- */
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--surface-1), var(--plane));
+  }
+  .top-row { display: flex; align-items: center; gap: 16px; padding: 18px 0; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 13px; }
+  .brand .glyph {
+    width: 42px; height: 42px; border-radius: 12px; flex: none;
+    background: radial-gradient(circle at 50% 42%, #d03b3b 0 20%, #ec835a 42%, #17181a 72%);
+    display: grid; place-items: center; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+  }
+  .brand .glyph svg { width: 26px; height: 26px; }
+  .brand h1 { font-size: 20px; line-height: 1.1; }
+  .brand .sub { font-size: 12.5px; color: var(--muted); letter-spacing: .01em; }
+  .top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; color: var(--text-2);
+    background: var(--surface-2); border: 1px solid var(--line);
+    padding: 7px 12px; border-radius: 999px;
+  }
+  .dot-live { width: 8px; height: 8px; border-radius: 50%; background: var(--m-micro); box-shadow: 0 0 0 0 rgba(12,163,12,.6); animation: live 2s infinite; }
+  @keyframes live { 0%{box-shadow:0 0 0 0 rgba(12,163,12,.55)} 70%{box-shadow:0 0 0 8px transparent} 100%{box-shadow:0 0 0 0 transparent} }
+  .icon-btn {
+    width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 16px;
+    display: grid; place-items: center; transition: background .15s;
+  }
+  .icon-btn:hover { background: var(--line); }
+
+  /* ---------- CONTROLS ---------- */
+  .controls { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-end; padding: 16px 0 18px; }
+  .ctl-group { display: flex; flex-direction: column; gap: 7px; }
+  .ctl-group > label { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 600; }
+  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button {
+    border: 0; background: none; color: var(--text-2); cursor: pointer;
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 7px; transition: all .12s;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .mag-ctl { display: flex; align-items: center; gap: 12px; min-width: 210px; }
+  .mag-ctl input[type=range] { flex: 1; accent-color: var(--accent); }
+  .mag-ctl b { font-variant-numeric: tabular-nums; min-width: 42px; font-size: 15px; }
+  .types { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chk {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 13px; color: var(--text-2); background: var(--surface-2);
+    border: 1px solid var(--line); padding: 6px 11px; border-radius: 8px; user-select: none;
+  }
+  .chk input { display: none; }
+  .chk .swatch { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .chk[data-on="false"] { opacity: .4; }
+  .btn {
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+    font: inherit; font-size: 13px; padding: 9px 16px; border-radius: 9px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px; transition: background .15s;
+  }
+  .btn:hover { background: var(--line); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* ---------- STATS ---------- */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; }
+  .stat small { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+  .stat .v { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin-top: 6px; line-height: 1; }
+  .stat .v em { font-style: normal; font-size: 14px; color: var(--muted); margin-left: 4px; letter-spacing: 0; }
+  .stat .cap { font-size: 12px; color: var(--text-2); margin-top: 6px; }
+
+  /* ---------- LAYOUT ---------- */
+  .grid { display: grid; grid-template-columns: 1fr 380px; gap: 18px; align-items: start; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .card > h3 { padding: 14px 16px 12px; font-size: 15px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .card > h3 span.hint { font-size: 11.5px; color: var(--muted); font-weight: 400; letter-spacing: 0; }
+
+  #map { height: 560px; width: 100%; background: var(--surface-2); }
+  @media (max-width: 640px) { #map { height: 420px; } }
+  .leaflet-container { font-family: inherit; background: #0a0a0a; }
+  :root[data-theme="light"] .leaflet-container { background: #e8e8e4; }
+
+  /* map legend */
+  .legend { position: absolute; z-index: 500; right: 12px; bottom: 22px; background: rgba(23,24,26,.92); border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; font-size: 12px; backdrop-filter: blur(6px); max-width: 210px; }
+  :root[data-theme="light"] .legend { background: rgba(255,255,255,.94); }
+  .legend b { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 6px; }
+  .legend .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; color: var(--text-2); }
+  .legend .row .swatch { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .legend .sep { height: 1px; background: var(--line); margin: 9px 0; }
+  .legend .mk { width: 16px; height: 16px; border-radius: 50%; flex: none; background: transparent; }
+
+  /* pulse marker */
+  .pulse { border-radius: 50%; }
+  .pulse i { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--c); animation: pulse 2.4s ease-out infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 var(--c)} 70%{box-shadow:0 0 0 20px transparent} 100%{box-shadow:0 0 0 0 transparent} }
+  @media (prefers-reduced-motion: reduce) { .pulse i, .dot-live { animation: none; } }
+
+  .side { display: flex; flex-direction: column; gap: 18px; }
+  .chart-box { padding: 12px 14px 14px; }
+  svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+  svg.chart text { fill: var(--muted); font-size: 10px; }
+  svg.chart .axis { stroke: var(--line); stroke-width: 1; }
+  svg.chart .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; opacity: .6; }
+
+  /* list */
+  .list-card { grid-column: 1 / -1; }
+  .table-scroll { max-height: 460px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { position: sticky; top: 0; background: var(--surface-2); text-align: left; padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; cursor: pointer; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  thead th:hover { color: var(--text); }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--text-2); vertical-align: middle; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: var(--surface-2); color: var(--text); }
+  .magtag { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; padding: 3px 8px; border-radius: 7px; font-weight: 700; color: #0d0d0d; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .typetag { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
+  .typetag.mainshock { border-color: var(--m-strong); color: var(--m-strong); font-weight: 600; }
+  .typetag.aftershock { border-color: var(--m-moderate); color: var(--m-moderate); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* popup */
+  .leaflet-popup-content-wrapper { background: var(--surface-1); color: var(--text); border-radius: 12px; box-shadow: var(--shadow); }
+  .leaflet-popup-tip { background: var(--surface-1); }
+  .leaflet-popup-content { margin: 13px 15px; font-size: 13px; line-height: 1.5; }
+  .pop h4 { margin: 0 0 6px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .pop .pmag { color: #0d0d0d; padding: 2px 8px; border-radius: 6px; font-weight: 700; }
+  .pop table { font-size: 12.5px; }
+  .pop td { padding: 2px 0; border: 0; color: var(--text-2); }
+  .pop td:first-child { color: var(--muted); padding-right: 12px; }
+  .pop a { display: inline-block; margin-top: 8px; font-size: 12.5px; }
+
+  /* tooltip for charts */
+  #tip { position: fixed; z-index: 9999; pointer-events: none; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; box-shadow: var(--shadow); opacity: 0; transition: opacity .1s; max-width: 230px; }
+  #tip b { color: var(--text); }
+
+  /* states */
+  .banner { padding: 12px 16px; border-radius: 10px; font-size: 13.5px; margin-bottom: 16px; display: none; align-items: center; gap: 10px; }
+  .banner.err { display: flex; background: rgba(208,59,59,.12); border: 1px solid rgba(208,59,59,.4); color: #ffb4b4; }
+  .banner.load { display: flex; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
+  .spin { width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }
+
+  /* footer */
+  footer { border-top: 1px solid var(--line); margin-top: 30px; padding: 24px 0 40px; color: var(--muted); font-size: 12.5px; }
+  footer .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; }
+  footer strong { color: var(--text-2); display: block; margin-bottom: 6px; font-size: 12.5px; }
+  footer p { margin: 4px 0; }
+  .disc { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); line-height: 1.55; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="top-row">
+      <div class="brand">
+        <div class="glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12h3l2-7 3 15 3-19 3 15 2-4h4"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Sismos Colombia</h1>
+          <div class="sub">Monitor independiente de actividad sísmica · datos abiertos</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="pill"><span class="dot-live"></span><span id="updated">Cargando…</span></span>
+        <button class="icon-btn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema claro/oscuro">◐</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" style="padding-top:6px">
+
+  <div class="controls">
+    <div class="ctl-group">
+      <label>Periodo</label>
+      <div class="seg" id="rangeSeg" role="group" aria-label="Periodo de tiempo">
+        <button data-days="1">24 h</button>
+        <button data-days="7" aria-pressed="true">7 días</button>
+        <button data-days="30">30 días</button>
+        <button data-days="90">90 días</button>
+        <button data-days="365">1 año</button>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <label>Magnitud mínima</label>
+      <div class="mag-ctl">
+        <input type="range" id="magRange" min="1" max="5.5" step="0.5" value="2.5">
+        <b id="magVal">M 2.5+</b>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <label>Tipo de evento</label>
+      <div class="types" id="typeFilters">
+        <label class="chk" data-type="mainshock" data-on="true"><input type="checkbox" checked><span class="swatch" style="background:var(--m-strong)"></span>Principales</label>
+        <label class="chk" data-type="aftershock" data-on="true"><input type="checkbox" checked><span class="swatch" style="background:var(--m-moderate)"></span>Réplicas</label>
+        <label class="chk" data-type="foreshock" data-on="true"><input type="checkbox" checked><span class="swatch" style="background:var(--m-minor)"></span>Premonitorios</label>
+        <label class="chk" data-type="background" data-on="true"><input type="checkbox" checked><span class="swatch" style="background:var(--seq)"></span>De fondo</label>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <label>&nbsp;</label>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary" id="refreshBtn">↻ Actualizar</button>
+        <label class="chk" style="cursor:pointer" title="Actualizar automáticamente cada 5 minutos"><input type="checkbox" id="autoChk" checked><span>Auto 5 min</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="banner load" id="banner"><span class="spin"></span><span id="bannerMsg">Consultando el catálogo del USGS…</span></div>
+
+  <section class="stats" id="stats"></section>
+
+  <div class="grid">
+    <div class="card" style="position:relative">
+      <h3>Mapa de actividad <span class="hint">tamaño = magnitud · color = severidad · trazo = tipo</span></h3>
+      <div id="map"></div>
+      <div class="legend" id="legend">
+        <b>Magnitud</b>
+        <div class="row"><span class="swatch" style="background:var(--m-major)"></span>6.0 +</div>
+        <div class="row"><span class="swatch" style="background:var(--m-strong)"></span>5.0 – 5.9</div>
+        <div class="row"><span class="swatch" style="background:var(--m-moderate)"></span>4.0 – 4.9</div>
+        <div class="row"><span class="swatch" style="background:var(--m-minor)"></span>2.5 – 3.9</div>
+        <div class="row"><span class="swatch" style="background:var(--m-micro)"></span>&lt; 2.5</div>
+        <div class="sep"></div>
+        <b>Tipo</b>
+        <div class="row"><span class="mk" style="border:2.5px solid #fff"></span>Principal</div>
+        <div class="row"><span class="mk" style="border:1.4px solid rgba(255,255,255,.6)"></span>Réplica</div>
+        <div class="row"><span class="mk" style="border:1.4px dashed #fff"></span>Premonitorio</div>
+        <div class="row"><span class="mk" style="border:1px solid rgba(255,255,255,.25)"></span>De fondo</div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <h3>Magnitud en el tiempo</h3>
+        <div class="chart-box"><svg class="chart" id="timeChart" viewBox="0 0 380 190" preserveAspectRatio="xMidYMid meet"></svg></div>
+      </div>
+      <div class="card">
+        <h3>Distribución por profundidad <span class="hint">km</span></h3>
+        <div class="chart-box"><svg class="chart" id="depthChart" viewBox="0 0 380 190" preserveAspectRatio="xMidYMid meet"></svg></div>
+      </div>
+    </div>
+
+    <div class="card list-card">
+      <h3>Registro de eventos <span class="hint" id="listHint"></span></h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th data-sort="time">Fecha / hora (Bogotá) ▾</th>
+            <th data-sort="mag">Mag.</th>
+            <th data-sort="depth">Prof.</th>
+            <th data-sort="place">Ubicación</th>
+            <th data-sort="type">Tipo</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div class="empty" id="emptyMsg" style="display:none">No hay eventos con los filtros actuales.</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <strong>Fuente de datos</strong>
+        <p>Catálogo sísmico del <a href="https://earthquake.usgs.gov/" target="_blank" rel="noopener">U.S. Geological Survey (USGS)</a>, servicio FDSN de eventos, consultado en tiempo real.</p>
+        <p>Región consultada: 82°O–66.5°O, 4.5°S–13.6°N (Colombia y su entorno tectónico).</p>
+      </div>
+      <div>
+        <strong>Referencia nacional oficial</strong>
+        <p>La autoridad sismológica de Colombia es el <a href="https://www.sgc.gov.co/sismos" target="_blank" rel="noopener">Servicio Geológico Colombiano (SGC)</a>, Red Sismológica Nacional. Consulte allí el reporte oficial de cada sismo.</p>
+      </div>
+      <div>
+        <strong>Cómo leer el mapa</strong>
+        <p>Las <b>réplicas</b> y <b>premonitorios</b> se identifican con la ventana espacio-temporal de Gardner–Knopoff (1974) sobre el catálogo cargado.</p>
+        <p>Los eventos preliminares pueden revisarse y cambiar de magnitud tras el análisis.</p>
+      </div>
+    </div>
+    <p class="disc">
+      Sitio <b>independiente</b> con fines informativos y educativos. No está afiliado ni respaldado por el USGS ni por el
+      Servicio Geológico Colombiano, y no utiliza sus logotipos. No es un sistema de alerta temprana: reporta eventos ya ocurridos.
+      La clasificación de réplicas es un cálculo estadístico aproximado y no sustituye el análisis oficial.
+    </p>
+  </div>
+</footer>
+
+<div id="tip"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- configuration ----------
+  var BBOX = { minlat: -4.5, maxlat: 13.6, minlon: -82, maxlon: -66.5 };
+  var ENDPOINT = "https://earthquake.usgs.gov/fdsnws/event/1/query";
+
+  var state = {
+    days: 7,
+    minmag: 2.5,
+    types: { mainshock: true, aftershock: true, foreshock: true, background: true },
+    raw: [],       // normalized + classified, all fetched events
+    sortKey: "time",
+    sortDir: -1,   // -1 desc, 1 asc
+    autoTimer: null,
+    lastLoaded: 0
+  };
+
+  // ---------- helpers ----------
+  function magColor(m) {
+    if (m >= 6) return getCss("--m-major");
+    if (m >= 5) return getCss("--m-strong");
+    if (m >= 4) return getCss("--m-moderate");
+    if (m >= 2.5) return getCss("--m-minor");
+    return getCss("--m-micro");
+  }
+  function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  function magRadius(m) { var r = 3 + Math.max(m, 0) * Math.max(m, 0) * 0.7; return Math.max(3.2, Math.min(34, r)); }
+  function fmtLocal(ms) {
+    try {
+      return new Date(ms).toLocaleString("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    } catch (e) { return new Date(ms).toISOString(); }
+  }
+  function fmtAgo(ms) {
+    var s = (Date.now() - ms) / 1000;
+    if (s < 90) return "hace " + Math.round(s) + " s";
+    if (s < 5400) return "hace " + Math.round(s / 60) + " min";
+    if (s < 172800) return "hace " + Math.round(s / 3600) + " h";
+    return "hace " + Math.round(s / 86400) + " días";
+  }
+  function haversine(a, b) {
+    var R = 6371, toR = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+    var la1 = a.lat * toR, la2 = b.lat * toR;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  var TYPE_LABEL = { mainshock: "Principal", aftershock: "Réplica", foreshock: "Premonitorio", background: "De fondo" };
+
+  // ---------- Gardner–Knopoff aftershock declustering ----------
+  function gkWindow(m) {
+    var L = Math.pow(10, 0.1238 * m + 0.983); // km
+    var T = m >= 6.5 ? Math.pow(10, 0.032 * m + 2.7389) : Math.pow(10, 0.5409 * m - 0.547); // days
+    return { L: L, T: T * 86400000 };
+  }
+  function decluster(events) {
+    events.forEach(function (e) { e.type = "background"; e.mainId = null; });
+    var byMag = events.slice().sort(function (a, b) { return b.mag - a.mag || a.time - b.time; });
+    var claimed = Object.create(null);
+    byMag.forEach(function (main) {
+      if (claimed[main.id]) return;                 // already a dependent of a larger event
+      var w = gkWindow(main.mag), captured = [];
+      for (var i = 0; i < events.length; i++) {
+        var e = events[i];
+        if (e.id === main.id || claimed[e.id] || e.mag >= main.mag) continue;
+        var dt = e.time - main.time;
+        if (Math.abs(dt) > w.T) continue;
+        if (haversine(main, e) > w.L) continue;
+        captured.push([e, dt >= 0]);
+      }
+      if (captured.length) {
+        if (main.type !== "aftershock" && main.type !== "foreshock") main.type = "mainshock";
+        captured.forEach(function (c) {
+          c[0].type = c[1] ? "aftershock" : "foreshock";
+          c[0].mainId = main.id;
+          claimed[c[0].id] = true;
+        });
+      }
+    });
+    return events;
+  }
+
+  // ---------- data fetch ----------
+  function buildUrl() {
+    var start = new Date(Date.now() - state.days * 86400000).toISOString();
+    var p = new URLSearchParams({
+      format: "geojson", starttime: start,
+      minlatitude: BBOX.minlat, maxlatitude: BBOX.maxlat,
+      minlongitude: BBOX.minlon, maxlongitude: BBOX.maxlon,
+      minmagnitude: state.minmag, orderby: "time", limit: 20000
+    });
+    return ENDPOINT + "?" + p.toString();
+  }
+  function normalize(gj) {
+    return (gj.features || []).map(function (f) {
+      var c = f.geometry && f.geometry.coordinates || [0, 0, 0];
+      return {
+        id: f.id,
+        mag: f.properties.mag == null ? 0 : f.properties.mag,
+        magType: f.properties.magType || "",
+        place: f.properties.place || "Ubicación desconocida",
+        time: f.properties.time,
+        updated: f.properties.updated,
+        lon: c[0], lat: c[1], depth: c[2] == null ? null : c[2],
+        url: f.properties.url,
+        status: f.properties.status
+      };
+    }).filter(function (e) { return typeof e.lat === "number" && typeof e.lon === "number"; });
+  }
+
+  function load() {
+    setBanner("load", "Consultando el catálogo del USGS…");
+    fetch(buildUrl(), { headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (gj) {
+        state.raw = decluster(normalize(gj));
+        hideBanner();
+        state.lastLoaded = Date.now();
+        updateStamp();
+        render();
+      })
+      .catch(function (err) {
+        setBanner("err", "No se pudo cargar el catálogo (" + err.message + "). Revisa tu conexión e intenta de nuevo.");
+      });
+  }
+
+  // ---------- filtering ----------
+  function filtered() {
+    return state.raw.filter(function (e) { return state.types[e.type] && e.mag >= state.minmag; });
+  }
+
+  // ---------- map ----------
+  var map, quakeLayer, pulseLayer, tileLayer, markerIndex = {};
+  var TILES = {
+    dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+  };
+  function initMap() {
+    map = L.map("map", { zoomControl: true, worldCopyJump: false, minZoom: 3 }).setView([4.6, -73.8], 6);
+    tileLayer = L.tileLayer(TILES[theme()], {
+      maxZoom: 18, subdomains: "abcd",
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · &copy; <a href="https://carto.com/attributions">CARTO</a> · Datos: <a href="https://earthquake.usgs.gov/">USGS</a>'
+    }).addTo(map);
+    quakeLayer = L.layerGroup().addTo(map);
+    pulseLayer = L.layerGroup().addTo(map);
+  }
+  function strokeFor(t) {
+    if (t === "mainshock") return { color: "#ffffff", weight: 2.5, dashArray: null };
+    if (t === "aftershock") return { color: "rgba(255,255,255,.6)", weight: 1.4, dashArray: null };
+    if (t === "foreshock") return { color: "#ffffff", weight: 1.3, dashArray: "3 3" };
+    return { color: "rgba(255,255,255,.25)", weight: 1, dashArray: null };
+  }
+  function popupHtml(e) {
+    var col = magColor(e.mag);
+    var rows = [
+      ["Profundidad", (e.depth == null ? "—" : e.depth.toFixed(1) + " km")],
+      ["Tipo", TYPE_LABEL[e.type]],
+      ["Fecha", fmtLocal(e.time) + " (Bogotá)"],
+      ["Estado", e.status === "reviewed" ? "revisado" : "preliminar"]
+    ].map(function (r) { return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>"; }).join("");
+    return '<div class="pop"><h4><span class="pmag" style="background:' + col + '">M ' + e.mag.toFixed(1) + '</span> ' +
+      (e.magType ? e.magType : "") + '</h4><div style="color:var(--text-2);margin-bottom:6px">' + escapeHtml(e.place) + '</div>' +
+      '<table>' + rows + '</table>' + (e.url ? '<a href="' + e.url + '" target="_blank" rel="noopener">Ficha USGS del evento →</a>' : "") + '</div>';
+  }
+  function drawMap(evts) {
+    quakeLayer.clearLayers(); pulseLayer.clearLayers(); markerIndex = {};
+    // paint smaller/background first, main/large on top
+    var ordered = evts.slice().sort(function (a, b) { return a.mag - b.mag; });
+    ordered.forEach(function (e) {
+      var s = strokeFor(e.type);
+      var m = L.circleMarker([e.lat, e.lon], {
+        radius: magRadius(e.mag), fillColor: magColor(e.mag), fillOpacity: 0.85,
+        color: s.color, weight: s.weight, dashArray: s.dashArray
+      });
+      m.bindPopup(popupHtml(e), { maxWidth: 280 });
+      m.addTo(quakeLayer);
+      markerIndex[e.id] = m;
+      if (e.type === "mainshock" || e.mag >= 5) {
+        var icon = L.divIcon({ className: "pulse", html: '<i style="--c:' + magColor(e.mag) + '"></i>', iconSize: [12, 12], iconAnchor: [6, 6] });
+        L.marker([e.lat, e.lon], { icon: icon, interactive: false }).addTo(pulseLayer);
+      }
+    });
+  }
+  function focusEvent(id) {
+    var e = state.raw.filter(function (x) { return x.id === id; })[0];
+    if (!e) return;
+    map.flyTo([e.lat, e.lon], Math.max(map.getZoom(), 8), { duration: 0.8 });
+    var mk = markerIndex[id];
+    if (mk) setTimeout(function () { mk.openPopup(); }, 850);
+  }
+
+  // ---------- stats ----------
+  function renderStats(evts) {
+    var big = evts.reduce(function (a, e) { return e.mag > a.mag ? e : a; }, { mag: -Infinity });
+    var after = evts.filter(function (e) { return e.type === "aftershock"; }).length;
+    var mains = evts.filter(function (e) { return e.type === "mainshock"; }).length;
+    var last = evts.reduce(function (a, e) { return e.time > a ? e.time : a; }, 0);
+    var depths = evts.filter(function (e) { return e.depth != null; }).map(function (e) { return e.depth; });
+    var medDepth = depths.length ? depths.slice().sort(function (a, b) { return a - b; })[Math.floor(depths.length / 2)] : null;
+    var cards = [
+      ["Eventos", evts.length.toLocaleString("es-CO"), "en " + rangeLabel()],
+      ["Mayor magnitud", big.mag > -Infinity ? big.mag.toFixed(1) : "—", big.mag > -Infinity ? shortPlace(big.place) : "sin datos", "M"],
+      ["Réplicas", after.toLocaleString("es-CO"), mains + " secuencia" + (mains === 1 ? "" : "s") + " principal" + (mains === 1 ? "" : "es")],
+      ["Prof. mediana", medDepth == null ? "—" : Math.round(medDepth), medDepth == null ? "" : "kilómetros", "km"],
+      ["Evento más reciente", last ? fmtAgo(last) : "—", last ? fmtLocal(last) : ""]
+    ];
+    document.getElementById("stats").innerHTML = cards.map(function (c) {
+      return '<div class="stat"><small>' + c[0] + '</small><div class="v">' + c[1] +
+        (c[3] ? '<em>' + c[3] + '</em>' : "") + '</div>' + (c[2] ? '<div class="cap">' + escapeHtml(c[2]) + '</div>' : "") + '</div>';
+    }).join("");
+  }
+  function shortPlace(p) { return p.length > 34 ? p.slice(0, 33) + "…" : p; }
+  function rangeLabel() {
+    return { 1: "24 horas", 7: "7 días", 30: "30 días", 90: "90 días", 365: "1 año" }[state.days] || (state.days + " días");
+  }
+
+  // ---------- charts ----------
+  var tip = document.getElementById("tip");
+  function showTip(html, x, y) { tip.innerHTML = html; tip.style.opacity = 1; tip.style.left = (x + 14) + "px"; tip.style.top = (y + 14) + "px"; }
+  function hideTip() { tip.style.opacity = 0; }
+
+  function drawTimeChart(evts) {
+    var svg = document.getElementById("timeChart");
+    var W = 380, H = 190, padL = 30, padR = 10, padT = 12, padB = 24;
+    if (!evts.length) { svg.innerHTML = emptyChart(W, H); return; }
+    var tMin = Date.now() - state.days * 86400000, tMax = Date.now();
+    var mMax = Math.max(5, Math.ceil(Math.max.apply(null, evts.map(function (e) { return e.mag; }))));
+    var mMin = Math.floor(Math.min.apply(null, evts.map(function (e) { return e.mag; })));
+    var x = function (t) { return padL + (t - tMin) / (tMax - tMin) * (W - padL - padR); };
+    var y = function (m) { return H - padB - (m - mMin) / (mMax - mMin) * (H - padT - padB); };
+    var parts = [];
+    // y grid + labels
+    for (var m = mMin; m <= mMax; m++) {
+      parts.push('<line class="grid-l" x1="' + padL + '" y1="' + y(m) + '" x2="' + (W - padR) + '" y2="' + y(m) + '"/>');
+      parts.push('<text x="' + (padL - 5) + '" y="' + (y(m) + 3) + '" text-anchor="end">' + m + '</text>');
+    }
+    // x ticks (dates)
+    var ticks = 4;
+    for (var i = 0; i <= ticks; i++) {
+      var t = tMin + (tMax - tMin) * i / ticks;
+      var lx = x(t);
+      var lbl = new Date(t).toLocaleDateString("es-CO", { day: "2-digit", month: "short", timeZone: "America/Bogota" });
+      parts.push('<text x="' + lx + '" y="' + (H - 8) + '" text-anchor="middle">' + lbl + '</text>');
+    }
+    parts.push('<line class="axis" x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' + (H - padB) + '"/>');
+    // dots
+    evts.slice().sort(function (a, b) { return a.mag - b.mag; }).forEach(function (e) {
+      var r = e.type === "mainshock" ? 4.5 : 2.6;
+      var extra = e.type === "mainshock" ? ' stroke="#fff" stroke-width="1.3"' : (e.type === "foreshock" ? ' stroke="#fff" stroke-width="1" stroke-dasharray="2 2"' : "");
+      parts.push('<circle cx="' + x(e.time).toFixed(1) + '" cy="' + y(e.mag).toFixed(1) + '" r="' + r + '" fill="' + magColor(e.mag) + '" fill-opacity="0.9"' + extra +
+        ' data-id="' + e.id + '" style="cursor:pointer"/>');
+    });
+    svg.innerHTML = parts.join("");
+    bindChartHover(svg, evts);
+  }
+
+  function drawDepthChart(evts) {
+    var svg = document.getElementById("depthChart");
+    var W = 380, H = 190, padL = 30, padR = 10, padT = 12, padB = 40;
+    var withD = evts.filter(function (e) { return e.depth != null; });
+    if (!withD.length) { svg.innerHTML = emptyChart(W, H); return; }
+    var edges = [0, 30, 70, 120, 180, 300, Infinity];
+    var labels = ["0–30", "30–70", "70–120", "120–180", "180–300", "300+"];
+    var counts = edges.slice(0, -1).map(function () { return 0; });
+    withD.forEach(function (e) {
+      for (var i = 0; i < edges.length - 1; i++) { if (e.depth >= edges[i] && e.depth < edges[i + 1]) { counts[i]++; break; } }
+    });
+    var max = Math.max.apply(null, counts) || 1;
+    var n = counts.length, bw = (W - padL - padR) / n * 0.68, gap = (W - padL - padR) / n;
+    var y = function (c) { return H - padB - c / max * (H - padT - padB); };
+    var parts = [];
+    // y grid
+    var steps = 3;
+    for (var s = 0; s <= steps; s++) {
+      var val = Math.round(max * s / steps);
+      var yy = y(val);
+      parts.push('<line class="grid-l" x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '"/>');
+      parts.push('<text x="' + (padL - 5) + '" y="' + (yy + 3) + '" text-anchor="end">' + val + '</text>');
+    }
+    counts.forEach(function (c, i) {
+      var bx = padL + gap * i + (gap - bw) / 2;
+      var bh = (H - padB) - y(c);
+      parts.push('<rect x="' + bx.toFixed(1) + '" y="' + y(c).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, bh).toFixed(1) +
+        '" rx="3" fill="var(--seq)" data-c="' + c + '" data-l="' + labels[i] + '" style="cursor:pointer"/>');
+      parts.push('<text x="' + (bx + bw / 2).toFixed(1) + '" y="' + (H - padB + 13) + '" text-anchor="middle" font-size="9">' + labels[i] + '</text>');
+    });
+    parts.push('<text x="' + ((W) / 2) + '" y="' + (H - 5) + '" text-anchor="middle" font-size="9" fill="var(--muted)">profundidad (km) · superficial → profundo</text>');
+    svg.innerHTML = parts.join("");
+    Array.prototype.forEach.call(svg.querySelectorAll("rect[data-c]"), function (r) {
+      r.addEventListener("mousemove", function (ev) { showTip("<b>" + r.getAttribute("data-c") + "</b> eventos<br>" + r.getAttribute("data-l") + " km", ev.clientX, ev.clientY); });
+      r.addEventListener("mouseleave", hideTip);
+    });
+  }
+  function emptyChart(W, H) { return '<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="var(--muted)">Sin datos en este rango</text>'; }
+  function bindChartHover(svg, evts) {
+    var idx = {}; evts.forEach(function (e) { idx[e.id] = e; });
+    Array.prototype.forEach.call(svg.querySelectorAll("circle[data-id]"), function (c) {
+      c.addEventListener("mousemove", function (ev) {
+        var e = idx[c.getAttribute("data-id")];
+        showTip("<b>M " + e.mag.toFixed(1) + "</b> · " + TYPE_LABEL[e.type] + "<br>" + escapeHtml(shortPlace(e.place)) + "<br>" + fmtLocal(e.time), ev.clientX, ev.clientY);
+      });
+      c.addEventListener("mouseleave", hideTip);
+      c.addEventListener("click", function () { focusEvent(c.getAttribute("data-id")); document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" }); });
+    });
+  }
+
+  // ---------- table ----------
+  function renderTable(evts) {
+    var tbody = document.getElementById("tbody");
+    var empty = document.getElementById("emptyMsg");
+    document.getElementById("listHint").textContent = evts.length + " eventos · clic para ubicar en el mapa";
+    if (!evts.length) { tbody.innerHTML = ""; empty.style.display = "block"; return; }
+    empty.style.display = "none";
+    var k = state.sortKey, dir = state.sortDir;
+    var sorted = evts.slice().sort(function (a, b) {
+      var va = a[k], vb = b[k];
+      if (k === "place" || k === "type") { va = String(va); vb = String(vb); return va < vb ? -dir : va > vb ? dir : 0; }
+      return (va - vb) * dir;
+    });
+    var rows = sorted.slice(0, 500).map(function (e) {
+      var col = magColor(e.mag);
+      var tc = e.type === "mainshock" ? "mainshock" : e.type === "aftershock" ? "aftershock" : "";
+      return '<tr data-id="' + e.id + '">' +
+        '<td class="num">' + fmtLocal(e.time) + '</td>' +
+        '<td><span class="magtag" style="background:' + col + '">' + e.mag.toFixed(1) + '</span></td>' +
+        '<td class="num">' + (e.depth == null ? "—" : e.depth.toFixed(0) + " km") + '</td>' +
+        '<td>' + escapeHtml(e.place) + '</td>' +
+        '<td><span class="typetag ' + tc + '">' + TYPE_LABEL[e.type] + '</span></td>' +
+        '</tr>';
+    }).join("");
+    tbody.innerHTML = rows + (sorted.length > 500 ? '<tr><td colspan="5" style="text-align:center;color:var(--muted)">Mostrando 500 de ' + sorted.length + ' eventos</td></tr>' : "");
+    Array.prototype.forEach.call(tbody.querySelectorAll("tr[data-id]"), function (tr) {
+      tr.addEventListener("click", function () { focusEvent(tr.getAttribute("data-id")); document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" }); });
+    });
+  }
+
+  // ---------- render all ----------
+  function render() {
+    var evts = filtered();
+    renderStats(evts);
+    drawMap(evts);
+    drawTimeChart(evts);
+    drawDepthChart(evts);
+    renderTable(evts);
+  }
+
+  // ---------- utils ----------
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function setBanner(cls, msg) { var b = document.getElementById("banner"); b.className = "banner " + cls; document.getElementById("bannerMsg") && (document.getElementById("bannerMsg").textContent = msg); if (cls === "err") b.innerHTML = "⚠ " + escapeHtml(msg); }
+  function hideBanner() { document.getElementById("banner").className = "banner"; }
+  function theme() { return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
+
+  // ---------- events / wiring ----------
+  document.getElementById("rangeSeg").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button"); if (!btn) return;
+    Array.prototype.forEach.call(this.children, function (b) { b.setAttribute("aria-pressed", b === btn ? "true" : "false"); });
+    state.days = +btn.getAttribute("data-days");
+    load();
+  });
+  var magR = document.getElementById("magRange");
+  magR.addEventListener("input", function () {
+    state.minmag = +this.value;
+    document.getElementById("magVal").textContent = "M " + state.minmag.toFixed(1) + "+";
+  });
+  magR.addEventListener("change", function () { load(); }); // refetch (server-side minmag)
+
+  document.getElementById("typeFilters").addEventListener("change", function (ev) {
+    var chk = ev.target.closest(".chk"); if (!chk) return;
+    var t = chk.getAttribute("data-type");
+    var on = chk.querySelector("input").checked;
+    chk.setAttribute("data-on", on);
+    state.types[t] = on;
+    render();
+  });
+  document.getElementById("refreshBtn").addEventListener("click", load);
+  function setAuto(on) {
+    clearInterval(state.autoTimer); state.autoTimer = null;
+    if (on) state.autoTimer = setInterval(load, 300000); // cada 5 minutos
+  }
+  document.getElementById("autoChk").addEventListener("change", function () { setAuto(this.checked); });
+  // keep the "Actualizado hace X" stamp ticking without a reload
+  function updateStamp() { if (state.lastLoaded) document.getElementById("updated").textContent = "Actualizado " + fmtAgo(state.lastLoaded); }
+  setInterval(updateStamp, 30000);
+  // re-pull fresh data when the visitor returns to a stale tab
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && state.lastLoaded && Date.now() - state.lastLoaded > 120000) load();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("thead th[data-sort]"), function (th) {
+    th.addEventListener("click", function () {
+      var k = th.getAttribute("data-sort");
+      if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = (k === "place" || k === "type") ? 1 : -1; }
+      Array.prototype.forEach.call(document.querySelectorAll("thead th"), function (h) { h.textContent = h.textContent.replace(/[ ▾▴]+$/, ""); });
+      th.textContent += state.sortDir === -1 ? " ▾" : " ▴";
+      renderTable(filtered());
+    });
+  });
+  document.getElementById("themeBtn").addEventListener("click", function () {
+    var next = theme() === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    if (tileLayer) tileLayer.setUrl(TILES[next]);
+    render(); // recolor markers/charts via CSS vars
+  });
+
+  // ---------- boot ----------
+  initMap();
+  load();
+  setAuto(document.getElementById("autoChk").checked); // auto-refresh on by default
+})();
+</script>
+</body>
+</html>
